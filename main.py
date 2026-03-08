@@ -40,49 +40,57 @@ pickle.dump(model, open("models/model.pkl", "wb"))
 """
 
 import cv2
+import numpy as np
+import requests
 from ultralytics import YOLO
 
-# Load pretrained YOLO model
 model = YOLO("yolov8n.pt")
 
-# ESP32 stream URL
-stream_url = "http://192.168.1.45:81/"
+stream_url = "http://192.168.4.1:81/stream"
 
-cap = cv2.VideoCapture(stream_url)
+print("Connecting to stream...")
+stream = requests.get(stream_url, stream=True, timeout=10)
+print(f"Connected! Status code: {stream.status_code}")
 
-while True:
+bytes_data = bytes()
 
-    ret, frame = cap.read()
-    if not ret:
-        print("Failed to grab frame")
-        break
+for chunk in stream.iter_content(chunk_size=65536):
+    bytes_data += chunk
 
-    results = model(frame)
+    a = bytes_data.find(b'\xff\xd8')
+    b = bytes_data.find(b'\xff\xd9')
 
-    people_count = 0
+    if a != -1 and b != -1:
+        jpg = bytes_data[a:b+2]
+        bytes_data = bytes_data[b+2:]
 
-    for r in results:
-        for box in r.boxes:
-            cls = int(box.cls[0])
+        # Skip if JPEG is too small to be a real frame
+        if len(jpg) < 1000:
+            continue
 
-            # COCO class 0 = person
-            if cls == 0:
-                people_count += 1
+        frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if frame is None:
+            continue
 
-                x1,y1,x2,y2 = map(int, box.xyxy[0])
-                cv2.rectangle(frame,(x1,y1),(x2,y2),(0,255,0),2)
+        print(f"Got frame! Size: {frame.shape}")
 
-    cv2.putText(frame,f"People: {people_count}",
-                (20,50),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                (0,0,255),
-                2)
+        results = model(frame)
+        people_count = 0
 
-    cv2.imshow("Bus Camera AI",frame)
+        for r in results:
+            for box in r.boxes:
+                if int(box.cls[0]) == 0:
+                    people_count += 1
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-    if cv2.waitKey(1) == 27:
-        break
+        cv2.putText(frame, f"People: {people_count}",
+                    (20, 50), cv2.FONT_HERSHEY_SIMPLEX,
+                    1, (0, 0, 255), 2)
 
-cap.release()
+        cv2.imshow("Bus Camera AI", frame)
+
+        if cv2.waitKey(1) == 27:
+            break
+
 cv2.destroyAllWindows()
