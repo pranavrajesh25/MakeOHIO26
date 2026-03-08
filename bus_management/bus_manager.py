@@ -1,6 +1,8 @@
 import requests
 import time
 import random
+import matplotlib.pyplot as ml
+import numpy as np
 
 BUS_MAX_CAPACITY = 65
 API_URL = "https://content.osu.edu/v2/bus/routes/"
@@ -50,8 +52,14 @@ def generate_stop_data():
         f.write("")
     with open("bus_management/stop_data.csv", "a") as file:
         for stop in stops.keys():
-            n = round(random.Random().random() * 5) # Data will be collected from bus stop cameras in the future
+            n = round(random.Random().random() * 12) # Data will be collected from bus stop cameras in the future
             file.write(stop + f", {n}\n")
+
+def get_bus_route(id):
+    with open("bus_management/bus_data.csv", "r") as file:
+        for line in file:
+            if str(id) in line:
+                return line[:line.index(",")]
 
 def collect_data():
     reset_bus_data()
@@ -99,9 +107,32 @@ def calculate_ridership() -> dict[int, list[int]]:
     
     return capacities
 
-if __name__ == "__main__":
-    while True:
-        time.sleep(10)
-        collect_data()
-        print(calculate_ridership())
+def graph_projected_ridership(ridership: dict[int, list[int]]):
+    for bus in ridership.keys():
+        ml.figure(bus)
+        route = get_bus_route(bus)
+        x = np.array([0,1,2,3])
+        y = np.array(ridership[bus])
+        ml.plot(x,y)
         
+        x0 = np.linspace(0,3)
+        y0 = x0*0 + BUS_MAX_CAPACITY
+        ml.plot(x0,y0)
+        ml.title(f"{route} Bus Number {bus}")
+        ml.xlabel("Future Stops")
+        ml.xticks([0,1,2,3])
+        ml.ylabel("Riders")
+        ml.ylim([0,BUS_MAX_CAPACITY+15])
+        ml.legend("Projected Ridership", "Max Ridership")
+
+    ml.show()
+
+if __name__ == "__main__":
+    # generate_stop_data()
+    graph_projected_ridership(calculate_ridership())
+
+    # while True:
+    #     time.sleep(10)
+    #     collect_data()
+    #     projected_ridership = calculate_ridership()
+    #     print(projected_ridership)
