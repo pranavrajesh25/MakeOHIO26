@@ -1,37 +1,55 @@
-# 1. IMPORT
-import pandas as pd
+import cv2
 import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+import requests
+from ultralytics import YOLO
 
-# 2. LOAD DATA
-df = pd.read_csv("data/your_file.csv")
-print(df.head())
+model = YOLO("yolov8n.pt")
 
-# 3. EXPLORE
-print(df.shape)
-print(df.describe())
-df.hist()
-plt.show()
+stream_url = "http://192.168.4.1:81/stream"
 
-# 4. PREPARE
-X = df.drop("target", axis=1)   # features
-y = df["target"]                 # label
+print("Connecting to stream...")
+stream = requests.get(stream_url, stream=True, timeout=10)
+print(f"Connected! Status code: {stream.status_code}")
 
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42
-)
+bytes_data = bytes()
 
-# 5. TRAIN
-from sklearn.ensemble import RandomForestClassifier
-model = RandomForestClassifier()
-model.fit(X_train, y_train)
+for chunk in stream.iter_content(chunk_size=65536):
+    bytes_data += chunk
 
-# 6. EVALUATE
-predictions = model.predict(X_test)
-print("Accuracy:", accuracy_score(y_test, predictions))
+    a = bytes_data.find(b'\xff\xd8')
+    b = bytes_data.find(b'\xff\xd9')
 
-# 7. SAVE MODEL
-import pickle
-pickle.dump(model, open("models/model.pkl", "wb"))
+    if a != -1 and b != -1:
+        jpg = bytes_data[a:b+2]
+        bytes_data = bytes_data[b+2:]
+
+        # Skip if JPEG is too small to be a real frame
+        if len(jpg) < 1000:
+            continue
+
+        frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if frame is None:
+            continue
+
+        print(f"Got frame! Size: {frame.shape}")
+
+        results = model(frame)
+        people_count = 0
+
+        for r in results:
+            for box in r.boxes:
+                if int(box.cls[0]) == 0:
+                    people_count += 1
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+        cv2.putText(frame, f"People: {people_count}",
+                    (20, 50), cv2.FONT_HERSHEY_SIMPLEX,
+                    1, (0, 0, 255), 2)
+
+        cv2.imshow("Bus Camera AI", frame)
+
+        if cv2.waitKey(1) == 27:
+            break
+
+cv2.destroyAllWindows()
